@@ -1,11 +1,9 @@
 import pytest
-import requests
 import random
 import string
 from typing import Dict, Any
-
-
-BASE_URL = "https://stellarburgers.education-services.ru/api"
+from tests.urls import BASE_URL
+from tests.test_user_api import register_user, delete_user  # Используем наши методы с Allure steps
 
 
 def generate_random_email() -> str:
@@ -37,8 +35,8 @@ def user_data() -> Dict[str, str]:
 @pytest.fixture
 def create_and_delete_user(user_data: Dict[str, str]):
     """Создает пользователя и удаляет после теста"""
-    # Создаем пользователя
-    response = requests.post(f"{BASE_URL}/auth/register", json=user_data)
+    # Создаем пользователя используя наш метод с Allure step
+    response = register_user(user_data)
     token = None
     
     if response.status_code == 200:
@@ -46,6 +44,6 @@ def create_and_delete_user(user_data: Dict[str, str]):
     
     yield user_data, token  # Передаем данные в тест
     
-    # После теста удаляем пользователя
+    # После теста удаляем пользователя используя наш метод с Allure step
     if token:
-        requests.delete(f"{BASE_URL}/auth/user", headers={"Authorization": token})
+        delete_user(token)
