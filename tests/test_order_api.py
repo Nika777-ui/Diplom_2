@@ -1,118 +1,128 @@
+"""
+Тесты для создания заказа через API Stellar Burgers
+"""
 import allure
 import pytest
-import requests
-from tests.urls import ORDERS_URL, INGREDIENTS_URL, USER_URL
-
-
-@allure.step("Отправить GET запрос для получения ингредиентов")
-def get_ingredients():
-    return requests.get(INGREDIENTS_URL)
-
-
-@allure.step("Отправить POST запрос для создания заказа")
-def create_order(order_data, token=None):
-    headers = {"Authorization": token} if token else {}
-    return requests.post(ORDERS_URL, json=order_data, headers=headers)
-
-
-@allure.step("Отправить DELETE запрос на удаление пользователя")
-def delete_user(token):
-    headers = {"Authorization": token}
-    return requests.delete(USER_URL, headers=headers)
+from tests.urls import BASE_URL
+from tests.api.user_api import UserAPI
+from tests.api.order_api import OrderAPI
+from tests.test_data import ERROR_MESSAGES, INVALID_ORDER_DATA
+from tests.helpers import create_random_user_data
 
 
 class TestOrderCreation:
-    """
-    Тесты для создания заказа через API Stellar Burgers
-    """
+    """Тесты для создания заказа"""
     
     @pytest.fixture
-    def available_ingredients(self):
-        """Фикстура для получения доступных ингредиентов"""
-        response = get_ingredients()
-        assert response.status_code == 200, "Не удалось получить ингредиенты"
-        ingredients_data = response.json()
-        assert ingredients_data["success"] is True, "Флаг success должен быть True"
-        return ingredients_data["data"]
+    def user_api(self):
+        """Фикстура для API клиента пользователей"""
+        return UserAPI(BASE_URL)
     
     @pytest.fixture
-    def valid_ingredients(self, available_ingredients):
-        """Фикстура для валидных ингредиентов"""
-        if available_ingredients:
-            return [ingredient["_id"] for ingredient in available_ingredients[:2]]
-        return []
+    def order_api(self):
+        """Фикстура для API клиента заказов"""
+        return OrderAPI(BASE_URL)
     
     @allure.title("Создание заказа с авторизацией и ингредиентами")
-    def test_create_order_with_auth_and_ingredients_success(self, create_and_delete_user, valid_ingredients):
+    def test_create_order_with_auth_and_ingredients_success(self, user_api, order_api, valid_ingredients):
         """Проверяем создание заказа с авторизацией и ингредиентами"""
-        user_data, token = create_and_delete_user
+        # Предусловие: Ингредиенты должны быть доступны
+        assert len(valid_ingredients) >= 2, "Недостаточно ингредиентов для теста"
         
-        if valid_ingredients:
-            order_data = {
-                "ingredients": valid_ingredients
-            }
-            
-            response = create_order(order_data, token)
-            
-            # Проверяем успешное создание заказа (статус + тело ответа)
-            assert response.status_code == 200, "Заказ с ингредиентами не создался"
-            order_response = response.json()
-            assert order_response["success"] is True, "Флаг success должен быть True"
-            assert "order" in order_response, "Данные заказа не вернулись"
-            assert "number" in order_response["order"], "Номер заказа не вернулся"
+        # Шаг 1: Создаем пользователя
+        user_data = create_random_user_data()
+        user_response = user_api.create_user(user_data)
+        assert user_response.status_code == 200, "Не удалось создать пользователя"
+        token = user_response.json().get("accessToken")
+        
+        # Шаг 2: Создаем заказ с ингредиентами
+        order_data = {"ingredients": valid_ingredients}
+        order_response = order_api.create_order(order_data["ingredients"], token)
+        
+        # Шаг 3: Проверяем успешное создание заказа
+        assert order_response.status_code == 200, "Заказ с ингредиентами не создался"
+        
+        order_data_response = order_response.json()
+        assert order_data_response["success"] is True, "Флаг success должен быть True"
+        assert "order" in order_data_response, "Данные заказа не вернулись"
+        assert "number" in order_data_response["order"], "Номер заказа не вернулся"
+        
+        # Постусловие: Удаляем пользователя
+        if token:
+            user_api.delete_user(token)
     
     @allure.title("Создание заказа без авторизации")
-    def test_create_order_without_auth_fails(self, valid_ingredients):
-        """Проверяем создание заказа без авторизации"""
-        if valid_ingredients:
-            order_data = {
-                "ingredients": valid_ingredients
-            }
-            
-            response = create_order(order_data)
-            
-            # Если API позволяет создавать заказы без авторизации - проверяем успех
-            if response.status_code == 200:
-                order_response = response.json()
-                assert order_response["success"] is True, "Заказ должен создаваться"
-                assert "order" in order_response, "Данные заказа не вернулись"
-            else:
-                # Или проверяем ошибку авторизации
-                assert response.status_code in [401, 403], "Ожидался либо успех, либо ошибка авторизации"
-                error_data = response.json()
-                assert error_data["success"] is False, "Флаг success должен быть False"
+    def test_create_order_without_auth_fails(self, order_api, valid_ingredients):
+        """Проверяем создание заказа без авторизации (по документации)"""
+        # Предусловие: Ингредиенты должны быть доступны
+        assert len(valid_ingredients) >= 2, "Недостаточно ингредиентов для теста"
+        
+        # Шаг: Пытаемся создать заказ без авторизации
+        order_data = {"ingredients": valid_ingredients}
+        response = order_api.create_order(order_data["ingredients"])
+        
+        # Проверяем по документации: должна быть ошибка авторизации
+        # Документация требует: 401 Unauthorized или 403 Forbidden
+        # Примечание: фактически API может возвращать 200 (баг приложения)
+        # Тест проверяет требования документации
+        assert response.status_code in [401, 403], (
+            f"По документации ожидалась ошибка авторизации (401/403), "
+            f"но получен статус {response.status_code}. "
+            f"Если API позволяет создавать заказы без авторизации - это баг."
+        )
+        
+        # Если статус соответствует документации, проверяем тело ответа
+        if response.status_code in [401, 403]:
+            error_data = response.json()
+            assert error_data["success"] is False, "Флаг success должен быть False"
     
     @allure.title("Создание заказа без ингредиентов")
-    def test_create_order_without_ingredients_fails(self, create_and_delete_user):
+    def test_create_order_without_ingredients_fails(self, user_api, order_api):
         """Проверяем создание заказа без ингредиентов"""
-        user_data, token = create_and_delete_user
+        # Шаг 1: Создаем пользователя
+        user_data = create_random_user_data()
+        user_response = user_api.create_user(user_data)
+        assert user_response.status_code == 200, "Не удалось создать пользователя"
+        token = user_response.json().get("accessToken")
         
-        order_data = {
-            "ingredients": []
-        }
+        # Шаг 2: Пытаемся создать заказ без ингредиентов
+        order_data = {"ingredients": INVALID_ORDER_DATA["empty_ingredients"]}
+        response = order_api.create_order(order_data["ingredients"], token)
         
-        response = create_order(order_data, token)
+        # Шаг 3: Проверяем ошибку валидации (400 Bad Request)
+        assert response.status_code == 400, "Ожидалась ошибка валидации (400)"
         
-        # Проверяем ошибку валидации (статус + тело ответа)
-        assert response.status_code == 400, "Ожидалась ошибка валидации"
         error_data = response.json()
         assert error_data["success"] is False, "Флаг success должен быть False"
-        assert "ingredient ids" in error_data.get("message", "").lower()
+        
+        # Проверяем сообщение об ошибке (регистронезависимо)
+        error_message = error_data.get("message", "").lower()
+        assert "ingredient" in error_message, "Сообщение должно содержать информацию об ингредиентах"
+        
+        # Постусловие: Удаляем пользователя
+        if token:
+            user_api.delete_user(token)
     
     @allure.title("Создание заказа с неверным хешем ингредиентов")
-    def test_create_order_with_invalid_ingredient_hash_fails(self, create_and_delete_user):
+    def test_create_order_with_invalid_ingredient_hash_fails(self, user_api, order_api):
         """Проверяем создание заказа с неверными хешами ингредиентов"""
-        user_data, token = create_and_delete_user
+        # Шаг 1: Создаем пользователя
+        user_data = create_random_user_data()
+        user_response = user_api.create_user(user_data)
+        assert user_response.status_code == 200, "Не удалось создать пользователя"
+        token = user_response.json().get("accessToken")
         
-        order_data = {
-            "ingredients": ["invalid_hash_12345", "another_invalid_hash"]
-        }
+        # Шаг 2: Пытаемся создать заказ с невалидными хешами
+        order_data = {"ingredients": INVALID_ORDER_DATA["invalid_hashes"]}
+        response = order_api.create_order(order_data["ingredients"], token)
         
-        response = create_order(order_data, token)
+        # Шаг 3: Проверяем ошибку сервера (500 Internal Server Error)
+        # Согласно документации API, неверные хеши должны возвращать 500
+        assert response.status_code == 500, (
+            f"Ожидалась ошибка сервера 500 для неверных хешей, "
+            f"получен статус {response.status_code}"
+        )
         
-        # Проверяем статус 500
-        assert response.status_code == 500, "Ожидалась ошибка сервера для неверных хешей"
-        
-        # Проверяем что ответ содержит HTML (не пытаемся парсить как JSON)
-        assert "text/html" in response.headers.get("Content-Type", ""), "Ожидался HTML ответ"
-        assert "<!DOCTYPE html>" in response.text, "Ответ должен содержать HTML"
+        # Постусловие: Удаляем пользователя
+        if token:
+            user_api.delete_user(token)

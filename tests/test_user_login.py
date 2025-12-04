@@ -1,71 +1,74 @@
+"""
+Тесты для авторизации пользователя через API Stellar Burgers
+"""
 import allure
 import pytest
-import requests
-from tests.urls import LOGIN_URL, REGISTER_URL, USER_URL
-
-
-@allure.step("Отправить POST запрос на авторизацию пользователя")
-def login_user(login_data):
-    return requests.post(LOGIN_URL, json=login_data)
-
-
-@allure.step("Отправить POST запрос на создание пользователя")
-def register_user(user_data):
-    return requests.post(REGISTER_URL, json=user_data)
-
-
-@allure.step("Отправить DELETE запрос на удаление пользователя")
-def delete_user(token):
-    headers = {"Authorization": token}
-    return requests.delete(USER_URL, headers=headers)
+from tests.urls import BASE_URL
+from tests.api.user_api import UserAPI
+from tests.test_data import ERROR_MESSAGES, INVALID_USERS
+from tests.helpers import create_random_user_data
 
 
 class TestUserLogin:
-    """
-    Тесты для авторизации пользователя через API Stellar Burgers
-    """
+    """Тесты для авторизации пользователя"""
+    
+    @pytest.fixture
+    def user_api(self):
+        """Фикстура для API клиента пользователей"""
+        return UserAPI(BASE_URL)
     
     @allure.title("Вход под существующим пользователем")
-    def test_login_existing_user_success(self, create_and_delete_user):
+    def test_login_existing_user_success(self, user_api):
         """Проверяем успешный вход под существующим пользователем"""
-        user_data, register_token = create_and_delete_user
+        # Шаг 1: Создаем пользователя
+        user_data = create_random_user_data()
+        create_response = user_api.create_user(user_data)
         
-        # Логинимся с правильными данными
+        assert create_response.status_code == 200, "Не удалось создать пользователя"
+        create_token = create_response.json().get("accessToken")
+        
+        # Шаг 2: Логинимся с правильными данными
         login_data = {
             "email": user_data["email"],
             "password": user_data["password"]
         }
         
-        response = login_user(login_data)
+        login_response = user_api.login_user(login_data)
         
-        # Проверяем успешный логин (статус + тело ответа)
-        assert response.status_code == 200, "Логин не удался"
-        login_response = response.json()
+        # Шаг 3: Проверяем успешный логин
+        assert login_response.status_code == 200, "Логин не удался"
         
-        assert login_response["success"] is True, "Флаг success должен быть True"
-        assert "accessToken" in login_response, "Токен доступа не получен"
-        assert "refreshToken" in login_response, "Refresh токен не получен"
-        assert login_response["user"]["email"] == user_data["email"], "Email не совпадает"
-        assert login_response["user"]["name"] == user_data["name"], "Name не совпадает"
+        login_data = login_response.json()
+        assert login_data["success"] is True, "Флаг success должен быть True"
+        assert "accessToken" in login_data, "Токен доступа не получен"
+        assert "refreshToken" in login_data, "Refresh токен не получен"
+        assert login_data["user"]["email"] == user_data["email"], "Email не совпадает"
+        assert login_data["user"]["name"] == user_data["name"], "Name не совпадает"
+        
+        # Шаг 4: Удаляем пользователя
+        if create_token:
+            user_api.delete_user(create_token)
     
     @allure.title("Вход с неверным логином и паролем")
-    @pytest.mark.parametrize("invalid_email,invalid_password", [
-        ("wrong@test.com", "validpassword123"),  # неверный email
-        ("valid@test.com", "wrongpassword123"),  # неверный пароль
-        ("wrong@test.com", "wrongpassword123")   # оба неверные
-    ])
-    def test_login_invalid_credentials_fails(self, invalid_email, invalid_password):
+    @pytest.mark.parametrize("invalid_email,invalid_password,invalid_name", INVALID_USERS)
+    def test_login_invalid_credentials_fails(self, invalid_email, invalid_password, invalid_name, user_api):
         """Проверяем вход с неверными учетными данными"""
+        # Шаг 1: Готовим неверные данные
         login_data = {
             "email": invalid_email,
             "password": invalid_password
         }
         
-        response = login_user(login_data)
+        # Шаг 2: Пытаемся авторизоваться
+        response = user_api.login_user(login_data)
         
-        # Проверяем что логин не удался (статус + тело ответа)
+        # Шаг 3: Проверяем что логин не удался
         assert response.status_code == 401, "Ожидался статус 401 для неверных учетных данных"
-        error_data = response.json()
         
+        error_data = response.json()
         assert error_data["success"] is False, "Флаг success должен быть False"
-        assert "email or password are incorrect" in error_data.get("message", "").lower()
+        
+        # Проверяем сообщение об ошибке (регистронезависимо)
+        error_message = error_data.get("message", "").lower()
+        expected_error = ERROR_MESSAGES["invalid_credentials"].lower()
+        assert expected_error in error_message, "Неверное сообщение об ошибке"

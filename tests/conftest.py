@@ -1,49 +1,63 @@
+"""
+Фикстуры для API тестов
+"""
 import pytest
-import random
-import string
-from typing import Dict, Any
+import requests
+from typing import Dict, Tuple
 from tests.urls import BASE_URL
-from tests.test_user_api import register_user, delete_user  # Используем наши методы с Allure steps
-
-
-def generate_random_email() -> str:
-    """Генерирует случайный email для тестов"""
-    username = ''.join(random.choices(string.ascii_lowercase, k=8))
-    return f"{username}@test.com"
-
-
-def generate_random_password() -> str:
-    """Генерирует случайный пароль для тестов"""
-    return ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-
-
-def generate_random_name() -> str:
-    """Генерирует случайное имя для тестов"""
-    return ''.join(random.choices(string.ascii_letters, k=8))
+from tests.helpers import create_random_user_data, extract_token_from_response
 
 
 @pytest.fixture
 def user_data() -> Dict[str, str]:
     """Генерирует данные для создания пользователя"""
-    return {
-        "email": generate_random_email(),
-        "password": generate_random_password(), 
-        "name": generate_random_name()
-    }
+    return create_random_user_data()
 
 
 @pytest.fixture
-def create_and_delete_user(user_data: Dict[str, str]):
-    """Создает пользователя и удаляет после теста"""
-    # Создаем пользователя используя наш метод с Allure step
-    response = register_user(user_data)
-    token = None
+def create_and_delete_user():
+    """
+    Создает пользователя для теста и удаляет после выполнения
+    ВНИМАНИЕ: эту фикстуру НЕ использовать в тестах создания пользователя!
+    """
+    from tests.api.user_api import UserAPI
     
-    if response.status_code == 200:
-        token = response.json().get("accessToken")
+    user_api = UserAPI(BASE_URL)
+    user_data = create_random_user_data()
+    
+    # Создаем пользователя
+    response = user_api.create_user(user_data)
+    token = extract_token_from_response(response)
     
     yield user_data, token  # Передаем данные в тест
     
-    # После теста удаляем пользователя используя наш метод с Allure step
+    # После теста удаляем пользователя
     if token:
-        delete_user(token)
+        user_api.delete_user(token)
+
+
+@pytest.fixture
+def available_ingredients():
+    """Фикстура для получения доступных ингредиентов"""
+    from tests.api.order_api import OrderAPI
+    
+    order_api = OrderAPI(BASE_URL)
+    response = order_api.get_ingredients()
+    
+    assert response.status_code == 200, "Не удалось получить ингредиенты"
+    ingredients_data = response.json()
+    return ingredients_data.get("data", [])
+
+
+@pytest.fixture
+def valid_ingredients(available_ingredients):
+    """Фикстура для валидных ингредиентов"""
+    if available_ingredients:
+        return [ingredient["_id"] for ingredient in available_ingredients[:2]]
+    return []
+
+
+@pytest.fixture  
+def invalid_ingredient_hash():
+    """Фикстура для невалидного хеша ингредиента"""
+    return "invalid_hash_12345"
