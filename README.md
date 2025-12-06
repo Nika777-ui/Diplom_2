@@ -57,13 +57,20 @@ Diplom_2/
 
 ### Запуск тестов 
 # Все тесты
-pytest tests/ -v
+pytest tests/
 
-# Тесты создания пользователя
-pytest tests/test_user_api.py -v
+# С генерацией Allure отчета
+pytest tests/ --alluredir=allure-results
+allure serve allure-results
 
-# Тесты авторизации
-pytest tests/test_user_login.py -v
+# Конкретные тесты
+pytest tests/test_user_api.py
+pytest tests/test_user_login.py  
+pytest tests/test_order_api.py
 
-# Тесты создания заказа
-pytest tests/test_order_api.py -v
+# Результаты тестирования
+Всего тестов: 13
+Успешно: 12 (92.3%)
+Провален: 1 (тест на соответствие документации)
+Проваленный тест: test_create_order_without_auth
+Причина: API возвращает 200 вместо ожидаемого 401 по документации.
